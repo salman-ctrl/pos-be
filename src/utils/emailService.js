@@ -1,24 +1,18 @@
 const nodemailer = require('nodemailer');
 
-/**
- * KONFIGURASI BREVO SMTP
- * Menggunakan port 2525 karena port 587 sering diblokir di Render
- */
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
-  port: 2525, // ⬅️ UBAH INI dari 587 ke 2525
+  port: 2525,
   secure: false,
   auth: {
     user: process.env.SMTP_USER, 
     pass: process.env.SMTP_PASS, 
   },
-  // Tambahan untuk debugging & timeout handling
-  connectionTimeout: 10000, // 10 detik
+  connectionTimeout: 10000,
   greetingTimeout: 10000,
   socketTimeout: 10000,
 });
 
-// Verifikasi koneksi saat startup
 transporter.verify(function(error, success) {
   if (error) {
     console.error('❌ SMTP Connection Failed:', error.message);
@@ -29,30 +23,49 @@ transporter.verify(function(error, success) {
 
 exports.sendOTP = async (email, otp) => {
   const mailOptions = {
-    from: `"Savoria POS System" <${process.env.SMTP_USER}>`,
+    from: '"Savoria POS" <zirmanvictory@gmail.com>', // ⬅️ EMAIL VERIFIED KAMU
     to: email,
-    subject: `[${otp}] Kode Verifikasi Masuk`,
+    subject: `${otp} - Kode Verifikasi Login`,
     html: `
-      <div style="font-family: sans-serif; padding: 30px; border: 1px solid #eee; border-radius: 20px; max-width: 500px; margin: auto; text-align: center;">
-        <h2 style="color: #f97316;">Verifikasi Login</h2>
-        <p>Gunakan kode di bawah ini untuk mengakses sistem POS Savoria Anda:</p>
-        <div style="background: #fff7ed; padding: 20px; border-radius: 15px; border: 1px dashed #fdba74; margin: 20px 0;">
-            <h1 style="font-size: 40px; letter-spacing: 10px; color: #111; margin: 0; font-family: monospace;">${otp}</h1>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f5f5f5;">
+        <div style="background-color: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <h2 style="color: #f97316; text-align: center; margin-bottom: 20px;">🔐 Kode Verifikasi Login</h2>
+          <p style="color: #333; font-size: 16px; text-align: center;">Gunakan kode OTP di bawah untuk login ke Savoria POS:</p>
+          
+          <div style="background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%); padding: 25px; border-radius: 10px; margin: 25px 0; text-align: center; border: 2px dashed #fdba74;">
+            <h1 style="font-size: 48px; letter-spacing: 8px; color: #111; margin: 0; font-family: 'Courier New', monospace;">${otp}</h1>
+          </div>
+          
+          <div style="background-color: #fef3c7; padding: 15px; border-radius: 8px; border-left: 4px solid #f59e0b; margin: 20px 0;">
+            <p style="margin: 0; color: #92400e; font-size: 14px;">⏱️ Kode ini berlaku selama <strong>5 menit</strong></p>
+          </div>
+          
+          <div style="background-color: #fee2e2; padding: 15px; border-radius: 8px; border-left: 4px solid #dc2626; margin: 20px 0;">
+            <p style="margin: 0; color: #991b1b; font-size: 14px;">🚫 Jangan bagikan kode ini kepada siapa pun!</p>
+          </div>
+          
+          <hr style="border: 0; border-top: 1px solid #e5e7eb; margin: 25px 0;" />
+          
+          <p style="text-align: center; color: #6b7280; font-size: 12px; margin: 0;">
+            Email otomatis dari <strong>Savoria POS System</strong><br/>
+            © 2026 - Jangan balas email ini
+          </p>
         </div>
-        <p style="font-size: 12px; color: #666;">Kode ini berlaku selama 5 menit. Jangan berikan kode ini kepada siapa pun.</p>
-        <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-        <p style="font-size: 10px; color: #999;">&copy; 2026 Savoria POS - Automated Security</p>
       </div>
     `,
+    headers: {
+      'X-Priority': '1',
+      'Importance': 'high'
+    }
   };
 
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ OTP Terkirim via Brevo: ${info.messageId}`);
+    console.log(`✅ OTP berhasil dikirim ke: ${email}`);
+    console.log(`📧 Message ID: ${info.messageId}`);
     return true;
   } catch (error) {
-    console.error("❌ Detail Error Brevo:", error.message);
-    console.error("❌ Full Error:", error);
+    console.error("❌ Error mengirim email:", error.message);
     throw new Error("Gagal mengirim email verifikasi.");
   }
 };
