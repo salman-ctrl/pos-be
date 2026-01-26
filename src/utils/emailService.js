@@ -1,21 +1,23 @@
 const nodemailer = require('nodemailer');
 
-// Helper: Render butuh port 465 (SSL) agar tidak timeout
-const smtpPort = parseInt(process.env.SMTP_PORT) || 465;
-
+/**
+ * PENTING UNTUK RENDER:
+ * Menggunakan preset service: 'gmail' jauh lebih stabil daripada konfigurasi host/port manual
+ * karena Nodemailer akan menangani pemilihan port (biasanya 587 dengan STARTTLS) 
+ * yang lebih ramah terhadap jaringan cloud.
+ */
 const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST || 'smtp.gmail.com',
-  port: smtpPort,
-  secure: true, // WAJIB true untuk port 465
+  service: 'gmail',
   auth: {
     user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS, // Pastikan di Render tidak ada spasi
+    pass: process.env.SMTP_PASS, // Pastikan di Render tetap tanpa spasi
   },
-  // Setting tambahan agar koneksi lebih stabil di Cloud
   tls: {
+    // Membantu melewati kendala sertifikat di lingkungan container/proxy
     rejectUnauthorized: false
   },
-  connectionTimeout: 15000, // Tambah waktu tunggu ke 15 detik
+  connectionTimeout: 20000, // Menunggu koneksi hingga 20 detik
+  greetingTimeout: 20000,   // Menunggu respon server hingga 20 detik
 });
 
 exports.sendOTP = async (email, otp) => {
@@ -41,13 +43,22 @@ exports.sendOTP = async (email, otp) => {
   };
 
   try {
-    // Verifikasi koneksi sebelum kirim
+    // Verifikasi koneksi sebelum mencoba mengirim
+    console.log("Menghubungkan ke server email...");
     await transporter.verify();
+    
     await transporter.sendMail(mailOptions);
     console.log(`✅ OTP Berhasil dikirim ke: ${email}`);
   } catch (error) {
     console.error("❌ Nodemailer Error:", error.message);
-    // Jika masih timeout, kemungkinan IP Render diblokir Gmail atau kredensial salah
+    
+    // Memberikan instruksi lebih spesifik jika terjadi error
+    if (error.code === 'ETIMEDOUT') {
+        throw new Error("Koneksi ke Gmail timeout. Server Render sedang kesulitan menjangkau Google.");
+    } else if (error.message.includes('Invalid login')) {
+        throw new Error("Email atau App Password salah. Periksa variabel SMTP_USER/PASS.");
+    }
+    
     throw new Error("Gagal mengirim email verifikasi. Cek logs server.");
   }
 };
