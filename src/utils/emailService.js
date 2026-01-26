@@ -2,24 +2,33 @@ const nodemailer = require('nodemailer');
 
 /**
  * KONFIGURASI BREVO SMTP
- * Kita menggunakan port 587 (TLS) karena paling aman untuk lingkungan Render.
+ * Menggunakan port 2525 karena port 587 sering diblokir di Render
  */
 const transporter = nodemailer.createTransport({
   host: 'smtp-relay.brevo.com',
-  port: 587,
-  secure: false, // Wajib false untuk port 587
+  port: 2525, // ⬅️ UBAH INI dari 587 ke 2525
+  secure: false,
   auth: {
-    // Gunakan 'Login' yang ada di dashboard Brevo kamu
     user: process.env.SMTP_USER, 
-    // Gunakan SMTP Key panjang yang kamu kirim tadi
     pass: process.env.SMTP_PASS, 
   },
+  // Tambahan untuk debugging & timeout handling
+  connectionTimeout: 10000, // 10 detik
+  greetingTimeout: 10000,
+  socketTimeout: 10000,
+});
+
+// Verifikasi koneksi saat startup
+transporter.verify(function(error, success) {
+  if (error) {
+    console.error('❌ SMTP Connection Failed:', error.message);
+  } else {
+    console.log('✅ SMTP Server siap mengirim email');
+  }
 });
 
 exports.sendOTP = async (email, otp) => {
   const mailOptions = {
-    // PENTING: Email pengirim (from) sebaiknya sama dengan SMTP_USER 
-    // atau email yang sudah kamu verifikasi di Brevo.
     from: `"Savoria POS System" <${process.env.SMTP_USER}>`,
     to: email,
     subject: `[${otp}] Kode Verifikasi Masuk`,
@@ -39,10 +48,11 @@ exports.sendOTP = async (email, otp) => {
 
   try {
     const info = await transporter.sendMail(mailOptions);
-    console.log(`✅ OTP Terkirim via Brevo: ${info.response}`);
+    console.log(`✅ OTP Terkirim via Brevo: ${info.messageId}`);
     return true;
   } catch (error) {
     console.error("❌ Detail Error Brevo:", error.message);
+    console.error("❌ Full Error:", error);
     throw new Error("Gagal mengirim email verifikasi.");
   }
 };
