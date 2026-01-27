@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-// Helper: Generate SKU Otomatis
+// Helper: Generate SKU Otomatis (Format: PROD-0001)
 const generateAutoSKU = async () => {
   const lastProduct = await prisma.product.findFirst({
     orderBy: { id: 'desc' }
@@ -33,11 +33,14 @@ exports.createProduct = async (req, res) => {
     let { sku, name, price, costPrice, stock, categoryId, isActive, displayType } = req.body;
 
     // Handle SKU Otomatis jika kosong
-    if (!sku || sku === "" || sku === "undefined") {
+    if (!sku || sku.trim() === "" || sku === "undefined") {
       sku = await generateAutoSKU();
+    } else {
+      const existing = await prisma.product.findUnique({ where: { sku: sku.toUpperCase() } });
+      if (existing) return res.status(400).json({ success: false, message: "SKU sudah digunakan!" });
     }
 
-    // PENTING: Ambil URL Cloudinary dari req.file.path
+    // Ambil URL Cloudinary dari req.file.path (Wajib link HTTPS/HTTP)
     const imageUrl = req.file ? req.file.path : null;
 
     const product = await prisma.product.create({
@@ -50,7 +53,7 @@ exports.createProduct = async (req, res) => {
         categoryId: categoryId && categoryId !== "undefined" ? parseInt(categoryId) : null,
         isActive: isActive === 'true' || isActive === true,
         displayType: displayType || 'normal',
-        imageUrl: imageUrl // Simpan link HTTPS Cloudinary
+        imageUrl: imageUrl
       }
     });
 
@@ -68,7 +71,14 @@ exports.updateProduct = async (req, res) => {
 
     const updateData = {};
     if (name) updateData.name = name;
-    if (sku) updateData.sku = sku.toUpperCase();
+    if (sku) {
+      const existing = await prisma.product.findFirst({
+        where: { sku: sku.toUpperCase(), NOT: { id: parseInt(id) } }
+      });
+      if (existing) return res.status(400).json({ success: false, message: "SKU sudah digunakan produk lain!" });
+      updateData.sku = sku.toUpperCase();
+    }
+
     if (price) updateData.price = parseFloat(price);
     if (costPrice) updateData.costPrice = parseFloat(costPrice);
     if (stock !== undefined) updateData.stock = parseInt(stock);
@@ -76,7 +86,7 @@ exports.updateProduct = async (req, res) => {
     if (displayType) updateData.displayType = displayType;
     if (isActive !== undefined) updateData.isActive = isActive === 'true' || isActive === true;
 
-    // LOGIKA UPDATE FOTO: Hanya timpa jika ada file baru
+    // Hanya ganti foto jika ada file baru yang diupload
     if (req.file) {
       updateData.imageUrl = req.file.path;
     }
@@ -88,7 +98,6 @@ exports.updateProduct = async (req, res) => {
 
     res.json({ success: true, message: "Produk berhasil diupdate", data: product });
   } catch (error) {
-    console.error("UPDATE ERROR:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 };
