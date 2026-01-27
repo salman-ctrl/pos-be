@@ -1,13 +1,12 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+// Helper: Generate SKU Otomatis
 const generateAutoSKU = async () => {
   const lastProduct = await prisma.product.findFirst({
     orderBy: { id: 'desc' }
   });
-
   const nextId = lastProduct ? lastProduct.id + 1 : 1;
-
   return `PROD-${String(nextId).padStart(4, '0')}`;
 };
 
@@ -33,31 +32,31 @@ exports.createProduct = async (req, res) => {
   try {
     let { sku, name, price, costPrice, stock, categoryId, isActive, displayType } = req.body;
 
-    if (!sku || sku.trim() === "") {
+    // Handle SKU Otomatis jika kosong
+    if (!sku || sku === "" || sku === "undefined") {
       sku = await generateAutoSKU();
-    } else {
-      const existing = await prisma.product.findUnique({ where: { sku } });
-      if (existing) return res.status(400).json({ success: false, message: "SKU sudah digunakan!" });
     }
 
+    // PENTING: Ambil URL Cloudinary dari req.file.path
     const imageUrl = req.file ? req.file.path : null;
 
     const product = await prisma.product.create({
       data: {
         sku: sku.toUpperCase(),
         name,
-        price: parseFloat(price),
-        costPrice: parseFloat(costPrice),
-        stock: parseInt(stock),
-        categoryId: parseInt(categoryId),
+        price: parseFloat(price) || 0,
+        costPrice: parseFloat(costPrice) || 0,
+        stock: parseInt(stock) || 0,
+        categoryId: categoryId && categoryId !== "undefined" ? parseInt(categoryId) : null,
         isActive: isActive === 'true' || isActive === true,
         displayType: displayType || 'normal',
-        imageUrl
+        imageUrl: imageUrl // Simpan link HTTPS Cloudinary
       }
     });
 
     res.status(201).json({ success: true, message: "Produk berhasil dibuat", data: product });
   } catch (error) {
+    console.error("CREATE ERROR:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 };
@@ -69,15 +68,7 @@ exports.updateProduct = async (req, res) => {
 
     const updateData = {};
     if (name) updateData.name = name;
-
-    if (sku) {
-      const existing = await prisma.product.findFirst({
-        where: { sku: sku, NOT: { id: parseInt(id) } }
-      });
-      if (existing) return res.status(400).json({ success: false, message: "SKU baru sudah digunakan produk lain!" });
-      updateData.sku = sku.toUpperCase();
-    }
-
+    if (sku) updateData.sku = sku.toUpperCase();
     if (price) updateData.price = parseFloat(price);
     if (costPrice) updateData.costPrice = parseFloat(costPrice);
     if (stock !== undefined) updateData.stock = parseInt(stock);
@@ -85,6 +76,7 @@ exports.updateProduct = async (req, res) => {
     if (displayType) updateData.displayType = displayType;
     if (isActive !== undefined) updateData.isActive = isActive === 'true' || isActive === true;
 
+    // LOGIKA UPDATE FOTO: Hanya timpa jika ada file baru
     if (req.file) {
       updateData.imageUrl = req.file.path;
     }
@@ -96,6 +88,7 @@ exports.updateProduct = async (req, res) => {
 
     res.json({ success: true, message: "Produk berhasil diupdate", data: product });
   } catch (error) {
+    console.error("UPDATE ERROR:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 };
