@@ -2,18 +2,18 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 const generateMemberId = async () => {
-    const lastCustomer = await prisma.customer.findFirst({
-        orderBy: { id: 'desc' }
-    });
+  const lastCustomer = await prisma.customer.findFirst({
+    orderBy: { id: 'desc' }
+  });
 
-    let sequence = 1;
-    if (lastCustomer && lastCustomer.memberId) {
-        const parts = lastCustomer.memberId.split('-');
-        if (parts.length === 2) {
-            sequence = parseInt(parts[1]) + 1;
-        }
+  let sequence = 1;
+  if (lastCustomer && lastCustomer.memberId) {
+    const parts = lastCustomer.memberId.split('-');
+    if (parts.length === 2) {
+      sequence = parseInt(parts[1]) + 1;
     }
-    return `MBR-${String(sequence).padStart(4, '0')}`;
+  }
+  return `MBR-${String(sequence).padStart(4, '0')}`;
 };
 
 exports.getAllCustomers = async (req, res) => {
@@ -22,37 +22,37 @@ exports.getAllCustomers = async (req, res) => {
     const whereClause = {};
 
     if (search) {
-        whereClause.OR = [
-            { name: { contains: search } },
-            { memberId: { contains: search } },
-            { phone: { contains: search } }
-        ];
+      whereClause.OR = [
+        { name: { contains: search } },
+        { memberId: { contains: search } },
+        { phone: { contains: search } }
+      ];
     }
 
     const customers = await prisma.customer.findMany({
-        where: whereClause,
-        include: {
-            transactions: {
-                where: { status: 'PAID' },
-                select: { grandTotal: true }
-            }
-        },
-        orderBy: { createdAt: 'desc' }
+      where: whereClause,
+      include: {
+        transactions: {
+          where: { status: 'PAID' },
+          select: { grandTotal: true }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
     });
 
     const formattedData = customers.map(cust => {
-        const totalSpent = cust.transactions.reduce((sum, trx) => sum + Number(trx.grandTotal), 0);
-        return {
-            id: cust.id,
-            memberId: cust.memberId,
-            name: cust.name,
-            phone: cust.phone,
-            email: cust.email,
-            imageUrl: cust.imageUrl,
-            displayType: cust.displayType,
-            totalSpent: totalSpent,
-            totalVisits: cust.transactions.length
-        };
+      const totalSpent = cust.transactions.reduce((sum, trx) => sum + Number(trx.grandTotal), 0);
+      return {
+        id: cust.id,
+        memberId: cust.memberId,
+        name: cust.name,
+        phone: cust.phone,
+        email: cust.email,
+        imageUrl: cust.imageUrl,
+        displayType: cust.displayType,
+        totalSpent: totalSpent,
+        totalVisits: cust.transactions.length
+      };
     });
 
     res.json({ success: true, data: formattedData });
@@ -64,6 +64,7 @@ exports.getAllCustomers = async (req, res) => {
 exports.createCustomer = async (req, res) => {
   try {
     const { name, phone, email, displayType } = req.body;
+    // FIX: Cloudinary Path
     const imageUrl = req.file ? req.file.path : null;
     const memberId = await generateMemberId();
 
@@ -71,24 +72,23 @@ exports.createCustomer = async (req, res) => {
     const validEmail = email && email.trim() !== "" ? email : null;
 
     if (validPhone) {
-        const exist = await prisma.customer.findUnique({ where: { phone: validPhone } });
-        if (exist) return res.status(400).json({ success: false, message: "Nomor HP sudah terdaftar!" });
+      const exist = await prisma.customer.findUnique({ where: { phone: validPhone } });
+      if (exist) return res.status(400).json({ success: false, message: "Nomor HP sudah terdaftar!" });
     }
 
     const customer = await prisma.customer.create({
-        data: {
-            memberId,
-            name,
-            phone: validPhone,
-            email: validEmail,
-            imageUrl,
-            displayType: displayType || 'normal'
-        }
+      data: {
+        memberId,
+        name,
+        phone: validPhone,
+        email: validEmail,
+        imageUrl,
+        displayType: displayType || 'normal'
+      }
     });
 
     res.status(201).json({ success: true, message: "Pelanggan berhasil ditambahkan", data: customer });
   } catch (error) {
-    console.error("Create Customer Error:", error); // Cek terminal untuk detail error
     res.status(500).json({ success: false, error: error.message });
   }
 };
@@ -97,22 +97,21 @@ exports.updateCustomer = async (req, res) => {
   try {
     const { id } = req.params;
     const { name, phone, email, displayType } = req.body;
-    
-    const validPhone = phone && phone.trim() !== "" ? phone : null;
-    const validEmail = email && email.trim() !== "" ? email : null;
 
-    const data = { 
-        name, 
-        phone: validPhone, 
-        email: validEmail 
-    };
+    const updateData = {};
+    if (name) updateData.name = name;
+    if (phone) updateData.phone = phone.trim() !== "" ? phone : null;
+    if (email) updateData.email = email.trim() !== "" ? email : null;
+    if (displayType) updateData.displayType = displayType;
 
-    if (displayType) data.displayType = displayType;
-    if (req.file) data.imageUrl = `/uploads/${req.file.filename}`;
+    // FIX: Cloudinary Update Image
+    if (req.file) {
+      updateData.imageUrl = req.file.path;
+    }
 
     const customer = await prisma.customer.update({
-        where: { id: parseInt(id) },
-        data: data
+      where: { id: parseInt(id) },
+      data: updateData
     });
 
     res.json({ success: true, message: "Data pelanggan berhasil diupdate", data: customer });

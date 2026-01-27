@@ -6,13 +6,13 @@ exports.getSettings = async (req, res) => {
     let setting = await prisma.storeSetting.findFirst();
 
     if (!setting) {
-        setting = await prisma.storeSetting.create({
-            data: { 
-                storeName: "Toko Saya",
-                taxRate: 0,
-                serviceCharge: 0
-            }
-        });
+      setting = await prisma.storeSetting.create({
+        data: {
+          storeName: "Savoria Bistro",
+          taxRate: 11,
+          serviceCharge: 0
+        }
+      });
     }
 
     res.json({ success: true, data: setting });
@@ -23,10 +23,10 @@ exports.getSettings = async (req, res) => {
 
 exports.updateSettings = async (req, res) => {
   try {
-    const { 
-        storeName, address, phone, email, website, 
-        taxRate, serviceCharge, receiptFooter,
-        enableCash, enableQris, enableDebit, autoPrintReceipt 
+    const {
+      storeName, address, phone, email, website,
+      taxRate, serviceCharge, receiptFooter,
+      enableCash, enableQris, enableDebit, autoPrintReceipt
     } = req.body;
 
     const firstSetting = await prisma.storeSetting.findFirst();
@@ -44,22 +44,24 @@ exports.updateSettings = async (req, res) => {
     if (taxRate !== undefined) dataToUpdate.taxRate = parseFloat(taxRate);
     if (serviceCharge !== undefined) dataToUpdate.serviceCharge = parseFloat(serviceCharge);
 
+    // Casting boolean string dari FormData
     if (enableCash !== undefined) dataToUpdate.enableCash = enableCash === 'true' || enableCash === true;
     if (enableQris !== undefined) dataToUpdate.enableQris = enableQris === 'true' || enableQris === true;
     if (enableDebit !== undefined) dataToUpdate.enableDebit = enableDebit === 'true' || enableDebit === true;
     if (autoPrintReceipt !== undefined) dataToUpdate.autoPrintReceipt = autoPrintReceipt === 'true' || autoPrintReceipt === true;
 
+    // FIX: Logo Store Cloudinary
     if (req.file) {
-        dataToUpdate.logoUrl = req.file ? req.file.path : null;;
+      dataToUpdate.logoUrl = req.file.path;
     }
 
     const updated = await prisma.storeSetting.upsert({
-        where: { id: id },
-        update: dataToUpdate,
-        create: {
-            storeName: storeName || "Toko Baru",
-            ...dataToUpdate
-        }
+      where: { id: id },
+      update: dataToUpdate,
+      create: {
+        storeName: storeName || "Savoria Bistro",
+        ...dataToUpdate
+      }
     });
 
     res.json({ success: true, message: "Pengaturan berhasil disimpan", data: updated });
