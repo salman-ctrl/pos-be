@@ -1,20 +1,28 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+const generateAutoSKU = async () => {
+  const lastProduct = await prisma.product.findFirst({
+    orderBy: { id: 'desc' }
+  });
+
+  const nextId = lastProduct ? lastProduct.id + 1 : 1;
+
+  return `PROD-${String(nextId).padStart(4, '0')}`;
+};
+
 exports.getAllProducts = async (req, res) => {
   try {
     const { search, category_id } = req.query;
-    const whereClause = {}; 
-
+    const whereClause = {};
     if (search) whereClause.name = { contains: search };
     if (category_id) whereClause.categoryId = parseInt(category_id);
 
     const products = await prisma.product.findMany({
-        where: whereClause,
-        include: { category: true },
-        orderBy: { createdAt: 'desc' }
+      where: whereClause,
+      include: { category: true },
+      orderBy: { createdAt: 'desc' }
     });
-
     res.json({ success: true, data: products });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
@@ -23,25 +31,29 @@ exports.getAllProducts = async (req, res) => {
 
 exports.createProduct = async (req, res) => {
   try {
-    const { sku, name, price, costPrice, stock, categoryId, isActive, displayType } = req.body;
-    const imageUrl = req.file ? req.file.path : null;
-    const existing = await prisma.product.findUnique({ where: { sku } });
-    if (existing) return res.status(400).json({ success: false, message: "SKU sudah digunakan!" });
+    let { sku, name, price, costPrice, stock, categoryId, isActive, displayType } = req.body;
 
-    const isActiveBool = isActive === 'true' || isActive === true;
+    if (!sku || sku.trim() === "") {
+      sku = await generateAutoSKU();
+    } else {
+      const existing = await prisma.product.findUnique({ where: { sku } });
+      if (existing) return res.status(400).json({ success: false, message: "SKU sudah digunakan!" });
+    }
+
+    const imageUrl = req.file ? req.file.path : null;
 
     const product = await prisma.product.create({
-        data: {
-            sku,
-            name,
-            price: parseFloat(price),
-            costPrice: parseFloat(costPrice),
-            stock: parseInt(stock),
-            categoryId: parseInt(categoryId),
-            isActive: isActiveBool,
-            displayType: displayType || 'normal', 
-            imageUrl
-        }
+      data: {
+        sku: sku.toUpperCase(),
+        name,
+        price: parseFloat(price),
+        costPrice: parseFloat(costPrice),
+        stock: parseInt(stock),
+        categoryId: parseInt(categoryId),
+        isActive: isActive === 'true' || isActive === true,
+        displayType: displayType || 'normal',
+        imageUrl
+      }
     });
 
     res.status(201).json({ success: true, message: "Produk berhasil dibuat", data: product });
@@ -53,30 +65,33 @@ exports.createProduct = async (req, res) => {
 exports.updateProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    const data = req.body;
-    
-    if (data.price) data.price = parseFloat(data.price);
-    if (data.costPrice) data.costPrice = parseFloat(data.costPrice);
-    if (data.stock) data.stock = parseInt(data.stock);
-    if (data.categoryId) data.categoryId = parseInt(data.categoryId);
-    
-    if (data.isActive !== undefined) {
-        data.isActive = data.isActive === 'true' || data.isActive === true;
+    const { name, sku, price, costPrice, stock, categoryId, isActive, displayType } = req.body;
+
+    const updateData = {};
+    if (name) updateData.name = name;
+
+    if (sku) {
+      const existing = await prisma.product.findFirst({
+        where: { sku: sku, NOT: { id: parseInt(id) } }
+      });
+      if (existing) return res.status(400).json({ success: false, message: "SKU baru sudah digunakan produk lain!" });
+      updateData.sku = sku.toUpperCase();
     }
+
+    if (price) updateData.price = parseFloat(price);
+    if (costPrice) updateData.costPrice = parseFloat(costPrice);
+    if (stock !== undefined) updateData.stock = parseInt(stock);
+    if (categoryId) updateData.categoryId = parseInt(categoryId);
+    if (displayType) updateData.displayType = displayType;
+    if (isActive !== undefined) updateData.isActive = isActive === 'true' || isActive === true;
 
     if (req.file) {
-        data.imageUrl = `/uploads/${req.file.filename}`;
+      updateData.imageUrl = req.file.path;
     }
-
-    if (data.displayType) {
-        data.displayType = data.displayType;
-    }
-
-    delete data.description;
 
     const product = await prisma.product.update({
-        where: { id: parseInt(id) },
-        data: data
+      where: { id: parseInt(id) },
+      data: updateData
     });
 
     res.json({ success: true, message: "Produk berhasil diupdate", data: product });
@@ -88,7 +103,7 @@ exports.updateProduct = async (req, res) => {
 exports.deleteProduct = async (req, res) => {
   try {
     const { id } = req.params;
-    await prisma.product.delete({ where: { id: parseInt(id) } }); 
+    await prisma.product.delete({ where: { id: parseInt(id) } });
     res.json({ success: true, message: "Produk berhasil dihapus" });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
