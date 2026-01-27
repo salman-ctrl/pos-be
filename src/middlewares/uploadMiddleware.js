@@ -1,34 +1,34 @@
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('../config/cloudinary'); // Pastikan file config ini sudah benar
 
-const uploadDir = path.join(__dirname, '../../public/uploads');
-
-if (!fs.existsSync(uploadDir)) {
-    fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        cb(null, uploadDir);
+/**
+ * PENTING:
+ * Kode sebelumnya menggunakan diskStorage (Lokal), 
+ * sekarang kita ganti ke CloudinaryStorage agar foto tersimpan permanen di Cloud.
+ */
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'pos-savoria-uploads', // Nama folder di dashboard Cloudinary Anda
+        allowed_formats: ['jpg', 'png', 'jpeg', 'webp'],
+        // Mentransformasi gambar agar ukurannya tidak terlalu raksasa (opsional)
+        transformation: [{ width: 800, height: 800, crop: 'limit' }],
     },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
-    }
 });
 
+// Filter file untuk memastikan hanya gambar yang boleh diupload
 const fileFilter = (req, file, cb) => {
     if (file.mimetype.startsWith('image/')) {
         cb(null, true);
     } else {
-        cb(new Error('Hanya boleh upload file gambar (jpg, png, jpeg)!'), false);
+        cb(new Error('Hanya boleh upload file gambar (jpg, png, jpeg, webp)!'), false);
     }
 };
 
-const upload = multer({ 
+const upload = multer({
     storage: storage,
-    limits: { fileSize: 2 * 1024 * 1024 }, 
+    limits: { fileSize: 3 * 1024 * 1024 }, // Limit 3MB
     fileFilter: fileFilter
 });
 
