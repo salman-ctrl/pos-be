@@ -9,8 +9,8 @@ const snap = new midtransClient.Snap({
 });
 
 /**
- * HELPER: Generate Invoice Number Otomatis
- * Format: INV/YYYYMMDD/XXXX
+ * HELPER: Generate Invoice Number Otomatis dengan Suffix Unik
+ * Menghindari error 'Order ID already taken' di Midtrans.
  */
 const generateInvoiceNumber = async (tx) => {
     const date = new Date();
@@ -26,15 +26,25 @@ const generateInvoiceNumber = async (tx) => {
 
     let sequence = 1;
     if (lastTransaction) {
+        // Ambil bagian angka urut (index ke 2), hapus suffix unik jika ada
         const parts = lastTransaction.invoiceNumber.split('/');
-        sequence = parseInt(parts[2]) + 1;
+        if (parts.length >= 3) {
+            const cleanSeq = parts[2].split('-')[0];
+            sequence = parseInt(cleanSeq) + 1;
+        }
     }
-    return `INV/${todayStr}/${String(sequence).padStart(4, '0')}`;
+
+    /**
+     * UNIQ SUFFIX LOGIC: 
+     * Kita tambahkan 3 karakter random di belakang agar jika request gagal dan diulang,
+     * Midtrans tidak menganggap ID ini sudah pernah digunakan.
+     */
+    const randomSuffix = Math.random().toString(36).substring(2, 5).toUpperCase();
+    return `INV/${todayStr}/${String(sequence).padStart(4, '0')}-${randomSuffix}`;
 };
 
 /**
  * 1. CREATE TRANSACTION (CHECKOUT)
- * Menggunakan Prisma Transaction (ACID) untuk menjamin stok dan uang sinkron.
  */
 exports.createTransaction = async (req, res) => {
     try {
@@ -54,8 +64,7 @@ exports.createTransaction = async (req, res) => {
                 if (product.stock < item.qty) throw new Error(`Stok ${product.name} kurang.`);
 
                 const price = Number(product.price);
-                const itemTotal = price * item.qty;
-                subTotal += itemTotal;
+                subTotal += price * item.qty;
 
                 transactionItemsData.push({
                     productId: product.id,
@@ -65,39 +74,45 @@ exports.createTransaction = async (req, res) => {
                 });
 
                 itemDetailsForMidtrans.push({
-                    id: product.id.toString(),
+                    id: product.sku || product.id.toString(),
                     price: Math.round(price),
                     quantity: item.qty,
                     name: product.name.substring(0, 50)
                 });
 
-                // Update Stok Produk
                 await tx.product.update({
                     where: { id: product.id },
                     data: { stock: product.stock - item.qty }
                 });
 
-                // Catat Movement Stok
                 await tx.stockMovement.create({
                     data: {
                         productId: product.id,
                         type: 'OUT',
                         qty: item.qty,
-                        currentStock: product.stock - item.qty,
                         source: 'SALE',
                         description: 'Penjualan Kasir'
                     }
                 });
             }
 
-            // AMBIL PAJAK DARI SETTINGS (DYNAMIC)
             const setting = await tx.storeSetting.findFirst();
-            const taxRate = setting?.taxRate ? Number(setting.taxRate) / 100 : 0.11;
-
+            const taxRate = setting?.taxRate ? Number(setting.taxRate) / 100 : 0;
             const taxAmount = Math.round(subTotal * taxRate);
-            const discountAmount = 0;
-            const grandTotal = Math.round(subTotal + taxAmount - discountAmount);
+            const grandTotal = subTotal + taxAmount;
+
+            // Generate Invoice unik agar tidak bentrok di Midtrans
             const invoiceNumber = await generateInvoiceNumber(tx);
+
+            // Masukkan pajak ke detail Midtrans (PENTING: Agar jumlah item == gross_amount)
+            if (taxAmount > 0) {
+                itemDetailsForMidtrans.push({
+                    id: 'TAX-PPN',
+                    price: taxAmount,
+                    quantity: 1,
+                    name: `Pajak (PPN ${setting.taxRate || 0}%)`
+                });
+            }
 
             const initialStatus = payment.type === 'CASH' ? 'PAID' : 'PENDING';
             const paymentStatus = payment.type === 'CASH' ? 'SETTLEMENT' : 'PENDING';
@@ -109,7 +124,7 @@ exports.createTransaction = async (req, res) => {
                     invoiceNumber,
                     subTotal,
                     taxAmount,
-                    discountAmount,
+                    discountAmount: 0,
                     grandTotal,
                     status: initialStatus,
                     items: { create: transactionItemsData },
@@ -124,21 +139,28 @@ exports.createTransaction = async (req, res) => {
                 include: { items: true, payments: true }
             });
 
-            // INTEGRASI MIDTRANS SNAP
             let midtransToken = null;
             let midtransUrl = null;
 
             if (payment.type !== 'CASH') {
                 const parameter = {
-                    transaction_details: { order_id: invoiceNumber, gross_amount: grandTotal },
-                    credit_card: { secure: true },
+                    transaction_details: {
+                        order_id: invoiceNumber,
+                        gross_amount: Math.round(grandTotal)
+                    },
                     item_details: itemDetailsForMidtrans,
+                    credit_card: { secure: true },
                     enabled_payments: ['gopay', 'other_qris', 'shopeepay']
                 };
 
-                const transaction = await snap.createTransaction(parameter);
-                midtransToken = transaction.token;
-                midtransUrl = transaction.redirect_url;
+                try {
+                    const transaction = await snap.createTransaction(parameter);
+                    midtransToken = transaction.token;
+                    midtransUrl = transaction.redirect_url;
+                } catch (midtransErr) {
+                    // Jika tetap error, kita throw agar Prisma melakukan rollback stok
+                    throw new Error(`Midtrans: ${midtransErr.message}`);
+                }
             }
 
             return { ...newTransaction, midtransToken, midtransUrl };
@@ -147,7 +169,7 @@ exports.createTransaction = async (req, res) => {
         res.status(201).json({ success: true, message: "Transaksi diproses!", data: result });
 
     } catch (error) {
-        console.error("Transaction Error:", error);
+        console.error("❌ Transaction Error:", error.message);
         res.status(400).json({ success: false, message: error.message });
     }
 };
@@ -167,7 +189,7 @@ exports.getAllTransactions = async (req, res) => {
         const [transactions, total] = await prisma.$transaction([
             prisma.transaction.findMany({
                 where: whereClause,
-                include: { user: { select: { name: true } }, payments: true },
+                include: { user: { select: { name: true } }, customer: { select: { name: true } }, payments: true },
                 orderBy: { createdAt: 'desc' },
                 skip,
                 take: parseInt(limit)
@@ -175,11 +197,7 @@ exports.getAllTransactions = async (req, res) => {
             prisma.transaction.count({ where: whereClause })
         ]);
 
-        res.json({
-            success: true,
-            data: transactions,
-            meta: { total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) }
-        });
+        res.json({ success: true, data: transactions, meta: { total, page: parseInt(page), totalPages: Math.ceil(total / parseInt(limit)) } });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -200,9 +218,9 @@ exports.getTransactionById = async (req, res) => {
                 payments: true
             }
         });
-
         if (!transaction) return res.status(404).json({ success: false, message: "Transaksi tidak ditemukan" });
-        res.json({ success: true, data: transaction });
+        const storeSettings = await prisma.storeSetting.findFirst();
+        res.json({ success: true, data: transaction, store: storeSettings });
     } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
@@ -213,15 +231,13 @@ exports.getTransactionById = async (req, res) => {
  */
 exports.handleMidtransNotification = async (req, res) => {
     try {
-        console.log("🔔 [WEBHOOK] Midtrans Signal Received:", req.body);
-
+        console.log("🔔 [WEBHOOK] Midtrans Received:", req.body);
         const notification = await snap.transaction.notification(req.body);
         const orderId = notification.order_id;
         const transactionStatus = notification.transaction_status;
         const fraudStatus = notification.fraud_status;
 
         let newStatus = '';
-
         if (transactionStatus === 'capture') {
             if (fraudStatus === 'challenge') newStatus = 'PENDING';
             else if (fraudStatus === 'accept') newStatus = 'PAID';
@@ -246,12 +262,9 @@ exports.handleMidtransNotification = async (req, res) => {
                     referenceId: notification.transaction_id
                 }
             });
-
-            console.log(`✅ [WEBHOOK] Transaction ${orderId} synchronized as ${newStatus}`);
+            console.log(`✅ [WEBHOOK] Invoice ${orderId} synced: ${newStatus}`);
         }
-
         res.status(200).json({ status: 'OK' });
-
     } catch (error) {
         console.error("❌ [WEBHOOK ERROR]:", error.message);
         res.status(500).json({ success: false, message: error.message });
